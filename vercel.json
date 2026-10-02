@@ -1,4 +1,7 @@
 {
   "cleanUrls": true,
-  "headers": [{ "source": "/data/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }]
+  "headers": [
+    { "source": "/(.*)", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }] },
+    { "source": "/data/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+  ]
 }
