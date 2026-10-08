@@ -34,17 +34,48 @@ def extract_pnl(path):
     hdr_row = None
     for i, row in enumerate(pm.iter_rows(min_row=40, max_row=60, max_col=1, values_only=True), 40):
         if row[0] == 'Project Code': hdr_row = i
-    rows = [r for r in pm.iter_rows(min_row=hdr_row + 1, max_col=33, values_only=True) if r[0]]
+    # columns located by header name so inserted / reordered columns in the master do not shift the figures
+    import re as _re
+    hdr = next(pm.iter_rows(min_row=hdr_row, max_row=hdr_row, values_only=True))
+    norm = lambda v: _re.sub(r'[^a-z0-9$%]', '', str(v or '').lower())
+    hmap = {}
+    for i, h in enumerate(hdr):
+        k = norm(h)
+        if k and k not in hmap: hmap[k] = i
+    def col(*aliases):
+        for a in aliases:
+            i = hmap.get(norm(a))
+            if i is not None: return i
+        return -1
+    C = dict(code=col('Project Code'), bu=col('BU'), name=col('Project Name'), start=col('Actual Start Date', 'Start Date', 'Start'), finish=col('Estimate to Finish Date', 'Finish Date', 'Finish'), handover=col('Handover Date', 'Handover'),
+        status=col('Status', 'Project Status'), contract=col('Contract Value $', 'Contract $', 'Current Value $'), fcstRev=col('Fcst Revenue $', 'Forecast Revenue $'), actRev=col('Actual Revenue $'),
+        apprCost=col('Approved Cost $'), revCost=col('Revise Cost $', 'Revised Cost $'), actCost=col('Actual Cost $'), apprGP=col('Approved GP $'), revGP=col('Revise GP $', 'Revised GP $'), actGP=col('Actual GP $'),
+        eac=col('EAC Cost $', 'EAC $', 'Estimate at Completion $'), etc=col('ETC Cost $', 'ETC $', 'Estimate to Complete $'),
+        apprGPp=col('Approved GP %'), revGPp=col('Revise GP %', 'Revised GP %'), actGPp=col('Actual GP %'), eacGPp=col('EAC GP %', 'ETC GP %'),
+        invoiced=col('Invoiced (incl VAT) $', 'Invoiced $'), collected=col('Cash Collected $', 'Collected $'), collPct=col('Collection %'), ar=col('Actual AR $', 'Outstanding AR $', 'AR $'),
+        future=col('Future Cash to Collect $', 'Future Cash $'), gpVar=col('GP Var $', 'GP Variance $'), gpVarPts=col('GP Var pts', 'GP Var %'), costVar=col('Cost Var $', 'Cost Variance $'),
+        health=col('Health'), risk=col('Main Risk', 'Risk'), riskScore=col('Risk Score $', 'Risk Score'), family=col('Family'))
+    missing = [k for k, v in C.items() if v < 0 and k not in ('eac', 'etc', 'eacGPp', 'handover')]
+    if missing: raise SystemExit(f'Project Master: columns not found by header name: {missing}')
+    if C['eac'] < 0 and C['etc'] < 0: raise SystemExit('Project Master: neither "EAC Cost $" nor "ETC Cost $" found')
+    g = lambda r, i: (r[i] if 0 <= i < len(r) else None)
+    pct = lambda v: v if isinstance(v, (int, float)) else None
+    rows = [r for r in pm.iter_rows(min_row=hdr_row + 1, max_col=len(hdr), values_only=True) if g(r, C['code'])]
     projects = []
     for r in rows:
+        nm, st = g(r, C['name']), g(r, C['status'])
         projects.append(dict(
-            code=s(r[0]), bu=s(r[1]), name=s(r[2]) if r[2] not in (None, 0) else '', start=dstr(r[3]), finish=dstr(r[4]), handover=dstr(r[5]),
-            status=s(r[6]) if r[6] not in (None, 0) else 'Not set', contract=num(r[7]), fcstRev=num(r[8]), actRev=num(r[9]),
-            apprCost=num(r[10]), revCost=num(r[11]), actCost=num(r[12]), apprGP=num(r[13]), revGP=num(r[14]), actGP=num(r[15]),
-            etc=num(r[16]), apprGPp=r[17] if isinstance(r[17], (int, float)) else None, revGPp=r[18] if isinstance(r[18], (int, float)) else None,
-            actGPp=r[19] if isinstance(r[19], (int, float)) else None, etcGPp=r[20] if isinstance(r[20], (int, float)) else None, invoiced=num(r[21]), collected=num(r[22]),
-            collPct=r[23] if isinstance(r[23], (int, float)) else None, ar=num(r[24]), future=num(r[25]), gpVar=num(r[26]),
-            gpVarPts=r[27] if isinstance(r[27], (int, float)) else None, costVar=num(r[28]), health=s(r[29]), risk=s(r[30]), riskScore=num(r[31]), family=s(r[32])))
+            code=s(g(r, C['code'])), bu=s(g(r, C['bu'])), name=s(nm) if nm not in (None, 0) else '', start=dstr(g(r, C['start'])), finish=dstr(g(r, C['finish'])), handover=dstr(g(r, C['handover'])),
+            status=s(st) if st not in (None, 0) else 'Not set', contract=num(g(r, C['contract'])), fcstRev=num(g(r, C['fcstRev'])), actRev=num(g(r, C['actRev'])),
+            apprCost=num(g(r, C['apprCost'])), revCost=num(g(r, C['revCost'])), actCost=num(g(r, C['actCost'])), apprGP=num(g(r, C['apprGP'])), revGP=num(g(r, C['revGP'])), actGP=num(g(r, C['actGP'])),
+            etc=num(g(r, C['eac'] if C['eac'] >= 0 else C['etc'])), apprGPp=pct(g(r, C['apprGPp'])), revGPp=pct(g(r, C['revGPp'])), actGPp=pct(g(r, C['actGPp'])), etcGPp=pct(g(r, C['eacGPp'])),
+            invoiced=num(g(r, C['invoiced'])), collected=num(g(r, C['collected'])), collPct=pct(g(r, C['collPct'])), ar=num(g(r, C['ar'])), future=num(g(r, C['future'])), gpVar=num(g(r, C['gpVar'])),
+            gpVarPts=pct(g(r, C['gpVarPts'])), costVar=num(g(r, C['costVar'])), health=s(g(r, C['health'])), risk=s(g(r, C['risk'])), riskScore=num(g(r, C['riskScore'])), family=s(g(r, C['family']))))
+    # an "ETC Cost $" column may hold the estimate AT completion (older masters: equals revise cost) or the estimate TO complete (EAC − actual); the app stores EAC
+    if C['eac'] < 0 and projects:
+        eq = sum(1 for p in projects if abs(p['etc'] - p['revCost']) < 1)
+        if eq / len(projects) < 0.5:
+            for p in projects: p['etc'] = p['etc'] + p['actCost']
     # customer + monthly forecast cash-in + AR aging per project from ISI CON / ISI BDS registers
     reg = {}
     profiles = {}
@@ -92,6 +123,43 @@ def extract_pnl(path):
     for p in projects:
         g = reg.get(p['code'], {})
         p['customer'] = g.get('customer', ''); p['fcastIn'] = g.get('fcastIn', {}); p['post2027'] = g.get('post2027', 0); p['aging'] = g.get('aging', [0, 0, 0, 0, 0])
+    # per-project monthly profile from the MG lines (Planning / Actual / Forecast rows × monthly $ block) — what the sheet's collection profile sums
+    MON = {'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'}
+    def mkey(v):
+        if isinstance(v, datetime.datetime): return ym(v)
+        t = s(v)
+        if t in ('Pre-2025', 'Post-2027'): return t
+        m = re.match(r'^([A-Za-z]{3})-(\d{2})$', t)
+        return f'20{m.group(2)}-{MON[m.group(1)]}' if m and m.group(1) in MON else None
+    monthly = {}
+    for sheet in ('MG CON Lines', 'MG BDS Lines'):
+        if sheet not in wb.sheetnames: continue
+        ws = wb[sheet]
+        hdr_i = None
+        for i, r in enumerate(ws.iter_rows(min_row=1, max_row=15, min_col=5, max_col=5, values_only=True), 1):
+            if s(r[0]).startswith('Project Code'): hdr_i = i; break
+        if not hdr_i: continue
+        hr = list(ws.iter_rows(min_row=hdr_i, max_row=hdr_i, values_only=True))[0]
+        pres = [j for j, v in enumerate(hr) if s(v) == 'Pre-2025']
+        start = pres[1] if len(pres) >= 2 else (pres[0] if pres else None)
+        if start is None: continue
+        cols = []
+        for j in range(start, len(hr)):
+            k = mkey(hr[j])
+            if not k: break
+            cols.append((j, k))
+            if k == 'Post-2027': break
+        for r in ws.iter_rows(min_row=hdr_i + 1, max_row=ws.max_row, values_only=True):
+            code, typ = s(r[4]) if len(r) > 4 else '', s(r[1]) if len(r) > 1 else ''
+            if not code or typ not in ('Planning', 'Actual', 'Forecast'): continue
+            m = monthly.setdefault(code, {'plan': {}, 'act': {}, 'fcst': {}})
+            tgt = m['plan'] if typ == 'Planning' else m['act'] if typ == 'Actual' else m['fcst']
+            for j, k in cols:
+                v = num(r[j]) if j < len(r) else 0
+                if v: tgt[k] = round(tgt.get(k, 0) + v, 2)
+    for p in projects:
+        m = monthly.get(p['code'])
+        if m: p['mPlan'] = m['plan']; p['mAct'] = m['act']; p['mFcst'] = m['fcst']
     # Exec Dashboard blocks
     health = []
     for r in ex.iter_rows(min_row=19, max_row=22, min_col=10, max_col=14, values_only=True):
